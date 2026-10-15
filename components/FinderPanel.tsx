@@ -70,15 +70,16 @@ export default function FinderPanel({ people, onPath }: Props) {
 
       {r?.connected && result && (
         <div className="space-y-3 rounded-md bg-amber-50 p-3">
-          <p className="text-lg font-semibold">{r.sentence}.</p>
-          <p className="break-words text-sm text-slate-700">{r.chain}</p>
-          {r.term && (
-            <p className="text-sm">
-              <span className="text-slate-600">Relationship: </span>
-              <span className="font-semibold">
-                {result.b.name} is {result.a.name}&apos;s {r.term}
-              </span>
+          {r.hindi && (
+            <p className="text-lg">
+              {result.b.name} is {result.a.name}&apos;s <span className="font-semibold">{r.hindi}</span>
+              {r.term && <span className="text-slate-600"> ({r.term})</span>}
             </p>
+          )}
+          <p className="font-medium">{r.sentence}.</p>
+          <p className="break-words text-sm text-slate-700">{r.chain}</p>
+          {r.hindi?.includes(" or ") && (
+            <p className="text-xs text-slate-500">Add birth years to tell elder from younger (Tau or Chacha, Jeth or Devar).</p>
           )}
         </div>
       )}

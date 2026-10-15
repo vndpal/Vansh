@@ -18,6 +18,8 @@ export type Relationship =
       sentence: string;
       /** Standard English kinship term, or null when none fits. */
       term: string | null;
+      /** Hindi word such as "Chacha", or a phrase such as "Bhabhi ki Behen" when no single word fits. */
+      hindi: string | null;
     };
 
 export function findRelationship(people: Person[], fromId: string, toId: string): Relationship {
@@ -28,7 +30,7 @@ export function findRelationship(people: Person[], fromId: string, toId: string)
   const from = index.byId.get(fromId)!;
   const to = index.byId.get(toId)!;
   if (fromId === toId) {
-    return { connected: true, path: [fromId], words: [], chain: from.name, sentence: "That is the same person", term: null };
+    return { connected: true, path: [fromId], words: [], chain: from.name, sentence: "That is the same person", term: null, hindi: null };
   }
 
   const words = describeSteps(index, route.ids, route.moves);
@@ -39,6 +41,7 @@ export function findRelationship(people: Person[], fromId: string, toId: string)
     chain: [from.name, ...words, to.name].join(" → "),
     sentence: `${to.name} is ${from.name}'s ${words.join("'s ")}`,
     term: kinshipTerm(index, route.ids, route.moves),
+    hindi: hindiTerm(index, route.ids, route.moves),
   };
 }
 
@@ -132,35 +135,38 @@ function describeSteps(index: FamilyIndex, ids: string[], moves: Move[]): string
   return words;
 }
 
-/** Generations from a person up to each of their ancestors (self at 0). */
-function ancestorDepths(index: FamilyIndex, id: string): Map<string, number> {
-  const depths = new Map([[id, 0]]);
-  const queue = [id];
-  for (let i = 0; i < queue.length; i++) {
-    const person = index.byId.get(queue[i])!;
-    for (const parentId of [person.fatherId, person.motherId]) {
-      if (parentId && index.byId.has(parentId) && !depths.has(parentId)) {
-        depths.set(parentId, depths.get(queue[i])! + 1);
-        queue.push(parentId);
-      }
-    }
-  }
-  return depths;
+/**
+ * A blood part of a path: `up` generations to the nearest common ancestor, then
+ * `down` generations to the end. A shortest path between blood relatives always
+ * turns at their nearest common ancestor.
+ */
+interface Segment {
+  ids: string[];
+  up: number;
+  down: number;
 }
 
 /**
- * Blood relationship through the nearest common ancestor: `up` generations from
- * A to that ancestor and `down` generations from it to B. Null if none.
+ * Splits a path at marriages, e.g. shape "BS" for a blood relative's spouse.
+ * Null when a blood part is not a plain up-then-down line.
  */
-export function bloodRelation(index: FamilyIndex, aId: string, bId: string): { up: number; down: number } | null {
-  const fromA = ancestorDepths(index, aId);
-  const fromB = ancestorDepths(index, bId);
-  let best: { up: number; down: number } | null = null;
-  for (const [id, up] of fromA) {
-    const down = fromB.get(id);
-    if (down !== undefined && (!best || up + down < best.up + best.down)) best = { up, down };
+function splitAtMarriages(ids: string[], moves: Move[]): { shape: string; segments: Segment[] } | null {
+  const segments: Segment[] = [];
+  let shape = "";
+  let start = 0;
+  for (let i = 0; i <= moves.length; i++) {
+    if (i < moves.length && moves[i] !== "spouse") continue;
+    if (i > start) {
+      const part = moves.slice(start, i);
+      const up = part.filter((m) => m === "up").length;
+      if (part.slice(0, up).some((m) => m !== "up")) return null;
+      segments.push({ ids: ids.slice(start, i + 1), up, down: part.length - up });
+      shape += "B";
+    }
+    if (i < moves.length) shape += "S";
+    start = i + 1;
   }
-  return best;
+  return { shape, segments };
 }
 
 const ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"];
@@ -199,68 +205,182 @@ export function bloodTerm(up: number, down: number, gender: Gender, half = false
 const stepTerm = (term: string, generations: number) => (generations === 1 ? `step${term}` : `step-${term}`);
 const siblingInLaw = (gender: Gender) => byGender(gender, "brother-in-law", "sister-in-law");
 
-function isUpThenDown(moves: Move[]): boolean {
-  let goingDown = false;
-  for (const move of moves) {
-    if (move === "down") goingDown = true;
-    else if (goingDown) return false;
-  }
-  return true;
-}
-
-/**
- * Splits the path at marriages into blood segments and matches the shape
- * against the standard English terms. Returns null when no term fits.
- */
+/** Matches the path's shape against the standard English terms. Returns null when no term fits. */
 function kinshipTerm(index: FamilyIndex, ids: string[], moves: Move[]): string | null {
-  const segments: Array<{ from: string; to: string }> = [];
-  let shape = "";
-  let start = 0;
-  for (let i = 0; i <= moves.length; i++) {
-    if (i < moves.length && moves[i] !== "spouse") continue;
-    if (i > start) {
-      if (!isUpThenDown(moves.slice(start, i))) return null;
-      segments.push({ from: ids[start], to: ids[i] });
-      shape += "B";
-    }
-    if (i < moves.length) shape += "S";
-    start = i + 1;
-  }
+  const split = splitAtMarriages(ids, moves);
+  if (!split) return null;
 
   const a = index.byId.get(ids[0])!;
   const b = index.byId.get(ids[ids.length - 1])!;
   const g = b.gender;
-  const rel = (n: number) => bloodRelation(index, segments[n].from, segments[n].to)!;
+  const [r] = split.segments;
 
-  switch (shape) {
+  switch (split.shape) {
     case "S":
       return byGender(g, "husband", "wife");
-    case "B": {
-      const r = rel(0);
+    case "B":
       return bloodTerm(r.up, r.down, g, r.up === 1 && r.down === 1 && isHalfSibling(a, b));
-    }
-    case "SB": {
+    case "SB":
       // B is a blood relative of A's spouse.
-      const r = rel(0);
       if (r.down === 0) return `${bloodTerm(r.up, 0, g)}-in-law`;
       if (r.up === 0) return stepTerm(bloodTerm(0, r.down, g), r.down);
       if (r.up === 1 && r.down === 1) return siblingInLaw(g);
       return `${bloodTerm(r.up, r.down, g)} by marriage`;
-    }
-    case "BS": {
+    case "BS":
       // B is the spouse of A's blood relative.
-      const r = rel(0);
       if (r.up === 0) return `${bloodTerm(0, r.down, g)}-in-law`;
       if (r.down === 0) return stepTerm(bloodTerm(r.up, 0, g), r.up);
       if (r.up === 1 && r.down === 1) return siblingInLaw(g);
       return `${bloodTerm(r.up, r.down, g)} by marriage`;
-    }
-    case "SBS": {
+    case "SBS":
       // Spouse's sibling's spouse.
-      const r = rel(0);
       return r.up === 1 && r.down === 1 ? siblingInLaw(g) : null;
-    }
     default:
       return null;
   }
+}
+
+// Hindi words (romanised). Many depend on the side of the family (Chacha vs Mama),
+// on who is older (Tau vs Chacha, Jeth vs Devar) and on the speaker's gender (Saala vs Devar).
+
+/** Elder or younger word by birth year. Both, when a year is missing or the years are equal. */
+function byAge(person: Person, than: Person, elder: string, younger: string): string {
+  if (person.birthYear === undefined || than.birthYear === undefined || person.birthYear === than.birthYear) {
+    return `${younger} or ${elder}`;
+  }
+  return person.birthYear < than.birthYear ? elder : younger;
+}
+
+/** Word for someone of A's parent's generation, or their spouse (`byMarriage`). */
+function uncleWord(parent: Person, relative: Person, byMarriage: boolean): string {
+  if (parent.gender === "female") {
+    if (byMarriage) return relative.gender === "male" ? "Mami" : "Mausa";
+    return byGender(relative.gender, "Mama", "Mausi");
+  }
+  if (relative.gender === "female") return byMarriage ? "Phupha" : "Bua";
+  return byMarriage ? byAge(relative, parent, "Tai", "Chachi") : byAge(relative, parent, "Tau", "Chacha");
+}
+
+function hindiBlood(index: FamilyIndex, { ids, up, down }: Segment): string | null {
+  const at = (i: number) => index.byId.get(ids.at(i)!)!;
+  const a = at(0);
+  const b = at(-1);
+  const g = b.gender;
+  // A's parent on the way up, or A's child when B is a direct descendant.
+  const viaMale = at(1).gender === "male";
+  const grandparent = viaMale ? byGender(g, "Dada", "Dadi") : byGender(g, "Nana", "Nani");
+  const grandchild = viaMale ? byGender(g, "Pota", "Poti") : byGender(g, "Nati", "Natin");
+
+  switch (down - up) {
+    case 0:
+      if (up === 1) return isHalfSibling(a, b) ? byGender(g, "Sautela Bhai", "Sauteli Behen") : byGender(g, "Bhai", "Behen");
+      // Cousins of any degree, named after A's parent's side and B's parent.
+      return `${viaMale ? (at(-2).gender === "male" ? "Chacher" : "Phupher") : at(-2).gender === "male" ? "Mamer" : "Mauser"}${byGender(g, "a Bhai", "i Behen")}`;
+    case -1:
+      return down === 0 ? byGender(g, "Pita", "Mata") : uncleWord(at(1), b, false);
+    case 1:
+      if (up === 0) return byGender(g, "Beta", "Beti");
+      return at(-2).gender === "male" ? byGender(g, "Bhatija", "Bhatiji") : byGender(g, "Bhanja", "Bhanji");
+    case -2:
+      return down === 0 ? grandparent : null;
+    case -3:
+      return down === 0 ? `Par${grandparent.toLowerCase()}` : null;
+    case 2:
+      return up === 0 ? grandchild : null;
+    case 3:
+      return up === 0 ? `Par${grandchild.toLowerCase()}` : null;
+    default:
+      return null;
+  }
+}
+
+/** A single Hindi word for the whole path, or null when none fits. */
+function hindiWord(index: FamilyIndex, ids: string[], moves: Move[]): string | null {
+  const split = splitAtMarriages(ids, moves);
+  if (!split) return null;
+
+  const at = (i: number) => index.byId.get(ids.at(i)!)!;
+  const a = at(0);
+  const b = at(-1);
+  const g = b.gender;
+  const [r, r2] = split.segments;
+
+  switch (split.shape) {
+    case "S":
+      return byGender(g, "Pati", "Patni");
+    case "B":
+      return hindiBlood(index, r);
+    case "SB":
+      // B is a blood relative of A's spouse (at 1).
+      if (r.up === 1 && r.down === 0) return byGender(g, "Sasur", "Saas");
+      if (r.up === 0 && r.down === 1) return byGender(g, "Sautela Beta", "Sauteli Beti");
+      if (r.up !== 1 || r.down !== 1) return null;
+      if (a.gender === "male") return byGender(g, "Saala", "Saali");
+      return g === "female" ? "Nanad" : byAge(b, at(1), "Jeth", "Devar");
+    case "BS": {
+      // B is the spouse of A's blood relative (at -2).
+      if (r.up === 1 && r.down === 0) return byGender(g, "Sautela Pita", "Sauteli Maa");
+      const generation = r.down - r.up;
+      if (generation === 0) return byGender(g, "Jija", "Bhabhi");
+      if (generation === 1) return byGender(g, "Damaad", "Bahu");
+      if (generation === -1) return uncleWord(at(1), at(-2), true);
+      return null;
+    }
+    case "SBS": {
+      // Spouse's sibling's spouse.
+      if (r.up !== 1 || r.down !== 1) return null;
+      const sibling = at(-2);
+      if (a.gender === "male") return sibling.gender === "female" ? "Saadhu" : "Salhaj";
+      return sibling.gender === "female" ? "Nandoi" : byAge(sibling, at(1), "Jethani", "Devrani");
+    }
+    case "BSB":
+      // Child's spouse's parent.
+      return r.up === 0 && r.down === 1 && r2.up === 1 && r2.down === 0 ? byGender(g, "Samdhi", "Samdhan") : null;
+    default:
+      return null;
+  }
+}
+
+// Words that change before ka/ki/ke: "Beta" becomes "Bete ki Patni".
+const OBLIQUE = new Set(["Beta", "Bhatija", "Bhanja", "Pota", "Parpota", "Saala", "Sautela", "Chachera", "Phuphera", "Mamera", "Mausera"]);
+const oblique = (phrase: string) =>
+  phrase
+    .split(" ")
+    .map((w) => (OBLIQUE.has(w) ? `${w.slice(0, -1)}e` : w))
+    .join(" ");
+
+/**
+ * The Hindi word for B, or a phrase like "Bhabhi ki Behen" built from words for
+ * parts of the path. A part never ends at the top of a sibling step (so it reads
+ * "Dada ka Bhai", not "Pardada ka Beta"), and a part that ends right after a
+ * marriage is preferred, the way people say "Bhabhi ka Bhai".
+ */
+function hindiTerm(index: FamilyIndex, ids: string[], moves: Move[]): string | null {
+  const parts: Array<{ word: string; person: Person; elder: boolean }> = [];
+  for (let i = 0; i < moves.length; ) {
+    const options: Array<{ end: number; word: string }> = [];
+    for (let end = moves.length; end > i; end--) {
+      if (end < moves.length && moves[end - 1] === "up" && moves[end] === "down") continue;
+      const word = hindiWord(index, ids.slice(i, end + 1), moves.slice(i, end));
+      if (word) options.push({ end, word });
+    }
+    const pick = options[0]?.end === moves.length ? options[0] : (options.find((o) => moves[o.end - 1] === "spouse") ?? options[0]);
+    if (!pick) return null;
+    const hops = moves.slice(i, pick.end);
+    parts.push({
+      word: pick.word,
+      person: index.byId.get(ids[pick.end])!,
+      elder: hops.filter((m) => m === "up").length > hops.filter((m) => m === "down").length,
+    });
+    i = pick.end;
+  }
+
+  return parts
+    .map((part, k) => {
+      const next = parts[k + 1];
+      if (!next) return part.word;
+      const of = next.person.gender === "female" ? "ki" : next.elder ? "ke" : "ka";
+      return `${oblique(part.word)} ${of}`;
+    })
+    .join(" ");
 }
