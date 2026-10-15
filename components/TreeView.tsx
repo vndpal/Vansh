@@ -25,14 +25,21 @@ export interface Highlight {
 // Zero-size, invisible handles so lines meet exactly at the card edge or union point.
 const hiddenHandle = { opacity: 0, pointerEvents: "none" as const, width: 0, height: 0, minWidth: 0, minHeight: 0, border: 0 };
 
+// Teal for men, violet for women: a coloured border plus a light tint of the same hue.
+const genderStyle = {
+  male: { border: "border-teal-500", tint: "bg-teal-50" },
+  female: { border: "border-violet-500", tint: "bg-violet-50" },
+};
+
 function PersonCard({ data }: NodeProps<PersonNode>) {
   const { person, state = "normal" } = data;
+  const { border, tint } = genderStyle[person.gender];
   return (
     <div
       style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
-      className={`flex cursor-pointer flex-col justify-center rounded-lg border-2 bg-white px-2 text-center shadow-sm transition-opacity ${
-        person.gender === "male" ? "border-sky-500" : "border-rose-400"
-      } ${state === "dim" ? "opacity-25" : ""} ${state === "highlight" ? "bg-amber-50 ring-4 ring-amber-400" : ""}`}
+      className={`flex cursor-pointer flex-col justify-center rounded-lg border-2 px-2 text-center shadow-sm transition-opacity ${border} ${
+        state === "highlight" ? "bg-amber-50 ring-4 ring-amber-400" : tint
+      } ${state === "dim" ? "opacity-25" : ""}`}
     >
       <Handle type="target" position={Position.Top} id="t" style={hiddenHandle} isConnectable={false} />
       <Handle type="source" position={Position.Top} id="ts" style={hiddenHandle} isConnectable={false} />
