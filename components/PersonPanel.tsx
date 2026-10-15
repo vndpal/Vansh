@@ -16,6 +16,7 @@ interface Props {
 export default function PersonPanel({ people, personId, onSaved }: Props) {
   const existing = personId ? people.find((p) => p.id === personId) : undefined;
   const [name, setName] = useState(existing?.name ?? "");
+  const [nickname, setNickname] = useState(existing?.nickname ?? "");
   const [gender, setGender] = useState<Gender>(existing?.gender ?? "male");
   const [birthYear, setBirthYear] = useState(existing?.birthYear?.toString() ?? "");
   const [notes, setNotes] = useState(existing?.notes ?? "");
@@ -75,7 +76,7 @@ export default function PersonPanel({ people, personId, onSaved }: Props) {
 
   function save(event: React.FormEvent) {
     event.preventDefault();
-    const body = { name, gender, birthYear: birthYear.trim() || undefined, notes, fatherId, motherId, spouseIds };
+    const body = { name, nickname, gender, birthYear: birthYear.trim() || undefined, notes, fatherId, motherId, spouseIds };
     run(() => (personId ? sendTreeRequest(`/api/people/${personId}`, "PUT", body) : sendTreeRequest("/api/people", "POST", body)));
   }
 
@@ -94,6 +95,20 @@ export default function PersonPanel({ people, personId, onSaved }: Props) {
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-base"
           value={name}
           onChange={(e) => setName(e.target.value)}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="person-nickname" className="mb-1 block text-sm font-medium text-slate-700">
+          Nickname (optional)
+        </label>
+        <input
+          id="person-nickname"
+          maxLength={50}
+          placeholder="e.g. Pappu, Guddu"
+          className="w-full rounded-md border border-slate-300 px-3 py-2 text-base"
+          value={nickname}
+          onChange={(e) => setNickname(e.target.value)}
         />
       </div>
 

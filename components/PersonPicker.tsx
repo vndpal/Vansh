@@ -3,7 +3,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Person } from "@/lib/types";
 
-export const personLabel = (p: Person) => (p.birthYear !== undefined ? `${p.name} (${p.birthYear})` : p.name);
+export const personLabel = (p: Person) =>
+  `${p.name}${p.nickname ? ` "${p.nickname}"` : ""}${p.birthYear !== undefined ? ` (${p.birthYear})` : ""}`;
+
+/** Search by name or nickname. */
+export const matchesName = (p: Person, query: string) =>
+  p.name.toLowerCase().includes(query) || !!p.nickname?.toLowerCase().includes(query);
 
 interface Props {
   label: string;
@@ -25,7 +30,7 @@ export default function PersonPicker({ label, options, value, onChange, placehol
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     return options
-      .filter((p) => p.name.toLowerCase().includes(q))
+      .filter((p) => matchesName(p, q))
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 50);
   }, [options, query]);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { samplePeople } from "./sample-family";
-import { buildIndex, deletePerson, familyOf, isFamilyHead, upsertPerson, type PersonInput } from "./tree";
+import { buildIndex, closeFamilyOf, deletePerson, familyOf, isFamilyHead, parsePersonInput, upsertPerson, type PersonInput } from "./tree";
 
 const inputFor = (id: string): PersonInput => {
   const { id: _id, ...rest } = samplePeople.find((p) => p.id === id)!;
@@ -52,5 +52,19 @@ describe("family heads", () => {
   it("have a family of wives and children, each oldest first", () => {
     expect(familyOf(index, "suresh")).toEqual(["suresh", "anita", "usha", "ravi", "deepak", "asha"]);
     expect(familyOf(index, "dinesh")).toEqual(["dinesh", "neha", "meera"]);
+  });
+});
+
+describe("parsePersonInput", () => {
+  it("keeps a trimmed nickname, drops an empty one and rejects a long one", () => {
+    expect(parsePersonInput({ name: "Ravi", gender: "male", nickname: "  Pappu " }).nickname).toBe("Pappu");
+    expect(parsePersonInput({ name: "Ravi", gender: "male", nickname: "  " }).nickname).toBeUndefined();
+    expect(() => parsePersonInput({ name: "Ravi", gender: "male", nickname: "x".repeat(51) })).toThrow(/Nickname is too long/);
+  });
+});
+
+describe("closeFamilyOf", () => {
+  it("is the person, parents, spouses, brothers and sisters, and children", () => {
+    expect(closeFamilyOf(buildIndex(samplePeople), "ravi").sort()).toEqual(["anita", "asha", "deepak", "priya", "ravi", "rohan", "suresh"]);
   });
 });

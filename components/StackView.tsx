@@ -60,6 +60,7 @@ export default function StackView({ people, highlight, onSelect }: Props) {
       >
         {isHead && <HeadTag />}
         <span className="truncate text-sm font-semibold text-slate-900">{person.name}</span>
+        {person.nickname && <span className="shrink-0 text-xs italic text-slate-500">&ldquo;{person.nickname}&rdquo;</span>}
         {person.birthYear !== undefined && <span className="shrink-0 text-xs text-slate-500">{person.birthYear}</span>}
       </button>
     );

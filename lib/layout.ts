@@ -1,6 +1,7 @@
 // Turns the people list into React Flow nodes and edges laid out top-down with dagre.
 // Spouses are grouped into one dagre node so they always sit side by side, and
-// brothers and sisters are kept in birth order, eldest on the left.
+// brothers and sisters are kept in birth order, eldest on the left. Each family line
+// (vansh) is kept together in its own labelled box, so in-law families sit beside it.
 import dagre from "@dagrejs/dagre";
 import type { BuiltInEdge, Node } from "@xyflow/react";
 import { buildIndex, byBirthYear, isFamilyHead } from "./tree";
@@ -9,14 +10,20 @@ import type { Person } from "./types";
 export const NODE_WIDTH = 168;
 export const NODE_HEIGHT = 56;
 const SPOUSE_GAP = 32;
+/** Room above a family box's first row for its label. */
+const BOX_LABEL_SPACE = 28;
 const EDGE_STYLE = { stroke: "#94a3b8", strokeWidth: 1.5 };
+/** A child line that crosses into another family line, e.g. a bride's line to her parents. */
+const CROSS_EDGE_STYLE = { ...EDGE_STYLE, strokeDasharray: "6 4" };
 
 export type NodeState = "normal" | "highlight" | "dim";
 export type PersonNode = Node<{ person: Person; isHead: boolean; state?: NodeState }, "person">;
 export type UnionNode = Node<Record<string, never>, "union">;
+export type FamilyBoxNode = Node<{ label: string; tone: number }, "family">;
 
 export interface TreeLayout {
-  nodes: Array<PersonNode | UnionNode>;
+  /** Family boxes come first so they are drawn underneath. */
+  nodes: Array<FamilyBoxNode | PersonNode | UnionNode>;
   edges: BuiltInEdge[];
   /** Edge ids that draw the link between two people, keyed by pairKey. */
   linkEdges: Map<string, string[]>;
@@ -124,6 +131,37 @@ function siblingConstraints(
   return constraints;
 }
 
+/**
+ * The family line (vansh) of each spouse group, named by its earliest known
+ * father-to-son ancestor. A couple belongs to the husband's line, so a married daughter
+ * sits with her husband's family. A group with no man follows the woman's father, or
+ * her mother's group when no father is recorded.
+ */
+function familyLines(groups: string[][], byId: Map<string, Person>, groupOf: Map<string, number>): string[] {
+  const paternalRoot = (p: Person) => {
+    while (p.fatherId && byId.has(p.fatherId)) p = byId.get(p.fatherId)!;
+    return p.id;
+  };
+  const lines: string[] = [];
+  const lineOf = (g: number): string => {
+    if (lines[g] !== undefined) return lines[g];
+    const members = groups[g].map((id) => byId.get(id)!);
+    const men = members.filter((p) => p.gender === "male");
+    const man = men.find((p) => p.fatherId && byId.has(p.fatherId)) ?? men[0];
+    const woman = members[0];
+    lines[g] = man
+      ? paternalRoot(man)
+      : woman.fatherId && byId.has(woman.fatherId)
+        ? paternalRoot(woman)
+        : woman.motherId && byId.has(woman.motherId)
+          ? lineOf(groupOf.get(woman.motherId)!)
+          : woman.id;
+    return lines[g];
+  };
+  groups.forEach((_, g) => lineOf(g));
+  return lines;
+}
+
 export function layoutTree(people: Person[]): TreeLayout {
   const index = buildIndex(people);
   const { byId } = index;
@@ -143,22 +181,66 @@ export function layoutTree(people: Person[]): TreeLayout {
   const groupOf = new Map<string, number>();
   groups.forEach((ids, i) => ids.forEach((id) => groupOf.set(id, i)));
 
-  const graph = new dagre.graphlib.Graph();
-  graph.setGraph({ rankdir: "TB", nodesep: 48, ranksep: 100, marginx: 24, marginy: 24 });
-  graph.setDefaultEdgeLabel(() => ({}));
-  groups.forEach((ids, i) => {
-    graph.setNode(`g${i}`, { width: ids.length * NODE_WIDTH + (ids.length - 1) * SPOUSE_GAP, height: NODE_HEIGHT });
-  });
-  for (const p of people) {
-    for (const parentId of parentsOf(p)) {
-      const from = groupOf.get(parentId)!;
-      const to = groupOf.get(p.id)!;
-      if (from !== to) graph.setEdge(`g${from}`, `g${to}`);
-    }
-  }
-  dagre.layout(graph, { constraints: siblingConstraints(people, groups, groupOf, parentsOf) });
+  // Box every family line with at least two people, unless the whole tree is one line.
+  // Largest first, so the main family gets the first (neutral) colour.
+  const lines = familyLines(groups, byId, groupOf);
+  const lineSize = new Map<string, number>();
+  groups.forEach((ids, i) => lineSize.set(lines[i], (lineSize.get(lines[i]) ?? 0) + ids.length));
+  let boxed =
+    lineSize.size > 1
+      ? [...lineSize]
+          .filter(([, size]) => size >= 2)
+          .sort((a, b) => b[1] - a[1])
+          .map(([line]) => line)
+      : [];
 
-  const nodes: TreeLayout["nodes"] = [];
+  const constraints = siblingConstraints(people, groups, groupOf, parentsOf);
+  const runDagre = () => {
+    const graph = new dagre.graphlib.Graph({ compound: boxed.length > 0 });
+    graph.setGraph({ rankdir: "TB", nodesep: 48, ranksep: 100, marginx: 24, marginy: 24 + BOX_LABEL_SPACE });
+    graph.setDefaultEdgeLabel(() => ({}));
+    for (const line of boxed) graph.setNode(`f:${line}`, {});
+    groups.forEach((ids, i) => {
+      graph.setNode(`g${i}`, { width: ids.length * NODE_WIDTH + (ids.length - 1) * SPOUSE_GAP, height: NODE_HEIGHT });
+      if (boxed.includes(lines[i])) graph.setParent(`g${i}`, `f:${lines[i]}`);
+    });
+    for (const p of people) {
+      for (const parentId of parentsOf(p)) {
+        const from = groupOf.get(parentId)!;
+        const to = groupOf.get(p.id)!;
+        if (from !== to) graph.setEdge(`g${from}`, `g${to}`);
+      }
+    }
+    dagre.layout(graph, { constraints });
+    return graph;
+  };
+  let graph: ReturnType<typeof runDagre>;
+  try {
+    graph = runDagre();
+  } catch (error) {
+    // Dagre's box (cluster) support fails on a few rare shapes of tree. Draw the tree
+    // without boxes rather than not at all.
+    if (boxed.length === 0) throw error;
+    boxed = [];
+    graph = runDagre();
+  }
+
+  const nodes: TreeLayout["nodes"] = boxed.map((line, tone) => {
+    const { x, y, width, height } = graph.node(`f:${line}`);
+    return {
+      id: `f:${line}`,
+      type: "family",
+      position: { x: x - width / 2, y: y - height / 2 - BOX_LABEL_SPACE },
+      data: { label: `${byId.get(line)!.name}'s vansh`, tone },
+      width,
+      height: height + BOX_LABEL_SPACE,
+      zIndex: -1,
+      selectable: false,
+      focusable: false,
+      // Let drags inside the box pan the canvas.
+      style: { pointerEvents: "none" as const },
+    };
+  });
   const position = new Map<string, { x: number; y: number }>();
   groups.forEach((ids, i) => {
     const { x, y, width } = graph.node(`g${i}`);
@@ -217,6 +299,8 @@ export function layoutTree(people: Person[]): TreeLayout {
   }
 
   // Parent to child lines. A child of a couple hangs from the couple's union point.
+  const childStyle = (parentId: string, childId: string) =>
+    lines[groupOf.get(parentId)!] === lines[groupOf.get(childId)!] ? EDGE_STYLE : CROSS_EDGE_STYLE;
   for (const child of people) {
     const parents = parentsOf(child);
     const union = parents.length === 2 ? unions.get(pairKey(parents[0], parents[1])) : undefined;
@@ -230,7 +314,7 @@ export function layoutTree(people: Person[]): TreeLayout {
         targetHandle: "t",
         type: "smoothstep",
         pathOptions: { stepPosition: union.stepPosition },
-        style: EDGE_STYLE,
+        style: childStyle(union.left, child.id),
       });
       for (const parentId of parents) {
         linkEdges.set(pairKey(parentId, child.id), [`${union.id}:${parentId === union.left ? "a" : "b"}`, id]);
@@ -238,7 +322,7 @@ export function layoutTree(people: Person[]): TreeLayout {
     } else {
       for (const parentId of parents) {
         const id = `p:${parentId}:${child.id}`;
-        edges.push({ id, source: parentId, sourceHandle: "b", target: child.id, targetHandle: "t", type: "smoothstep", style: EDGE_STYLE });
+        edges.push({ id, source: parentId, sourceHandle: "b", target: child.id, targetHandle: "t", type: "smoothstep", style: childStyle(parentId, child.id) });
         linkEdges.set(pairKey(parentId, child.id), [id]);
       }
     }

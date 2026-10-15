@@ -60,6 +60,16 @@ export function familyOf(index: FamilyIndex, headId: string): string[] {
   return [headId, ...sorted(head.spouseIds), ...sorted(index.childrenOf.get(headId) ?? [])];
 }
 
+/** Ids of a person and their close family: parents, spouses, brothers and sisters, children. */
+export function closeFamilyOf(index: FamilyIndex, id: string): string[] {
+  const person = index.byId.get(id);
+  if (!person) return [];
+  const parents = [person.fatherId, person.motherId].filter((p): p is string => !!p && index.byId.has(p));
+  const siblings = parents.flatMap((p) => index.childrenOf.get(p) ?? []);
+  const children = index.childrenOf.get(id) ?? [];
+  return [...new Set([id, ...parents, ...person.spouseIds.filter((s) => index.byId.has(s)), ...siblings, ...children])];
+}
+
 export type PersonInput = Omit<Person, "id">;
 
 function optionalString(value: unknown): string | undefined {
@@ -78,6 +88,8 @@ export function parsePersonInput(body: unknown): PersonInput {
   const name = typeof b.name === "string" ? b.name.trim() : "";
   if (!name) throw new TreeError("Name is required.");
   if (name.length > 100) throw new TreeError("Name is too long (100 characters max).");
+  const nickname = optionalString(b.nickname);
+  if (nickname && nickname.length > 50) throw new TreeError("Nickname is too long (50 characters max).");
   if (b.gender !== "male" && b.gender !== "female") throw new TreeError("Gender must be male or female.");
 
   let birthYear: number | undefined;
@@ -97,6 +109,7 @@ export function parsePersonInput(body: unknown): PersonInput {
 
   return {
     name,
+    nickname,
     gender: b.gender,
     birthYear,
     notes,

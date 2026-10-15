@@ -15,7 +15,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { NODE_HEIGHT, NODE_WIDTH, type PersonNode, type TreeLayout } from "@/lib/layout";
+import { NODE_HEIGHT, NODE_WIDTH, type FamilyBoxNode, type PersonNode, type TreeLayout } from "@/lib/layout";
 import { genderStyle, HEAD_HINT, HeadTag } from "./person-style";
 
 export interface Highlight {
@@ -23,6 +23,8 @@ export interface Highlight {
   edgeIds: Set<string>;
   /** Set when the highlight is one head's family. */
   headId?: string;
+  /** Set when the highlight is a searched person's close family. */
+  focusId?: string;
 }
 
 // Zero-size, invisible handles so lines meet exactly at the card edge or union point.
@@ -46,7 +48,13 @@ function PersonCard({ data }: NodeProps<PersonNode>) {
       <Handle type="source" position={Position.Bottom} id="b" style={hiddenHandle} isConnectable={false} />
       {isHead && <HeadTag className="absolute -top-2 left-2" />}
       <div className="truncate text-sm font-semibold text-slate-900">{person.name}</div>
-      {person.birthYear !== undefined && <div className="text-xs text-slate-500">b. {person.birthYear}</div>}
+      {(person.nickname || person.birthYear !== undefined) && (
+        <div className="truncate text-xs text-slate-500">
+          {person.nickname && <span className="italic">&ldquo;{person.nickname}&rdquo;</span>}
+          {person.nickname && person.birthYear !== undefined && " · "}
+          {person.birthYear !== undefined && `b. ${person.birthYear}`}
+        </div>
+      )}
     </div>
   );
 }
@@ -61,7 +69,24 @@ function UnionPoint() {
   );
 }
 
-const nodeTypes: NodeTypes = { person: PersonCard, union: UnionPoint };
+// Soft tints that tell family lines apart without clashing with the teal and violet cards.
+const boxTones = [
+  { box: "border-slate-300 bg-slate-200/40", label: "bg-slate-600" },
+  { box: "border-sky-300 bg-sky-100/50", label: "bg-sky-700" },
+  { box: "border-rose-300 bg-rose-100/50", label: "bg-rose-700" },
+  { box: "border-lime-400 bg-lime-100/50", label: "bg-lime-700" },
+];
+
+function FamilyBox({ data }: NodeProps<FamilyBoxNode>) {
+  const tone = boxTones[data.tone % boxTones.length];
+  return (
+    <div className={`h-full w-full rounded-2xl border-2 border-dashed ${tone.box}`}>
+      <span className={`absolute left-3 top-1.5 rounded-md px-2 py-0.5 text-xs font-semibold text-white ${tone.label}`}>{data.label}</span>
+    </div>
+  );
+}
+
+const nodeTypes: NodeTypes = { person: PersonCard, union: UnionPoint, family: FamilyBox };
 
 interface Props {
   layout: TreeLayout;
@@ -70,6 +95,9 @@ interface Props {
 }
 
 const MIN_READABLE_ZOOM = 0.6;
+// Off-screen cards are not rendered (onlyRenderVisibleElements), so they have no measured
+// size and fitView would skip them. This makes it use their declared size instead.
+const FIT_ALL = { includeHiddenNodes: true };
 
 function Flow({ layout, highlight, onSelect }: Props) {
   const { fitView, setViewport } = useReactFlow();
@@ -90,7 +118,7 @@ function Flow({ layout, highlight, onSelect }: Props) {
       highlight
         ? layout.edges.map((edge) =>
             highlight.edgeIds.has(edge.id)
-              ? { ...edge, zIndex: 1, style: { stroke: "#d97706", strokeWidth: 3 } }
+              ? { ...edge, zIndex: 1, style: { ...edge.style, stroke: "#d97706", strokeWidth: 3 } }
               : { ...edge, style: { ...edge.style, opacity: 0.15 } },
           )
         : layout.edges,
@@ -101,7 +129,7 @@ function Flow({ layout, highlight, onSelect }: Props) {
   useEffect(() => {
     if (!highlight) return;
     const timer = setTimeout(() => {
-      fitView({ nodes: [...highlight.nodeIds].map((id) => ({ id })), padding: 0.2, duration: 400, maxZoom: 1.2 });
+      fitView({ ...FIT_ALL, nodes: [...highlight.nodeIds].map((id) => ({ id })), padding: 0.2, duration: 400, maxZoom: 1.2 });
     }, 50);
     return () => clearTimeout(timer);
   }, [highlight, fitView]);
@@ -120,7 +148,7 @@ function Flow({ layout, highlight, onSelect }: Props) {
       height / (Math.max(...ys) - minY + NODE_HEIGHT + 80),
     );
     if (fitZoom >= MIN_READABLE_ZOOM) {
-      fitView({ maxZoom: 1, padding: 0.1 });
+      fitView({ ...FIT_ALL, maxZoom: 1, padding: 0.1 });
       return;
     }
     const top = people.filter((n) => n.position.y < minY + 1).map((n) => n.position.x);
@@ -144,7 +172,7 @@ function Flow({ layout, highlight, onSelect }: Props) {
       maxZoom={2}
     >
       <Background />
-      <Controls showInteractive={false} fitViewOptions={{ padding: 0.05 }} />
+      <Controls showInteractive={false} fitViewOptions={{ ...FIT_ALL, padding: 0.05 }} />
     </ReactFlow>
   );
 }

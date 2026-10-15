@@ -2,14 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { layoutTree, pairKey } from "@/lib/layout";
-import { buildIndex, familyOf, isFamilyHead } from "@/lib/tree";
+import { buildIndex, closeFamilyOf, familyOf, isFamilyHead } from "@/lib/tree";
 import type { Person } from "@/lib/types";
+import FamilyPanel from "./FamilyPanel";
 import FinderPanel from "./FinderPanel";
 import PersonPanel from "./PersonPanel";
 import StackView from "./StackView";
 import TreeView, { type Highlight } from "./TreeView";
 
-type Panel = { kind: "person"; id?: string } | { kind: "find" } | null;
+type Panel = { kind: "person"; id?: string } | { kind: "find" } | { kind: "family"; id?: string } | null;
 type View = "tree" | "stack";
 
 const buttonClass = "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-100";
@@ -23,13 +24,16 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
   const layout = useMemo(() => layoutTree(people), [people]);
   const index = useMemo(() => buildIndex(people), [people]);
   const head = highlight?.headId ? index.byId.get(highlight.headId) : undefined;
+  const focused = highlight?.focusId ? index.byId.get(highlight.focusId) : undefined;
 
   // Lights up the given people and the lines drawn between any of the given pairs.
-  function highlightPeople(ids: string[], pairs: Array<[string, string]>, headId?: string) {
+  function highlightPeople(ids: string[], pairs: Array<[string, string]>, about: Pick<Highlight, "headId" | "focusId"> = {}) {
     const edgeIds = new Set<string>();
     for (const [a, b] of pairs) for (const id of layout.linkEdges.get(pairKey(a, b)) ?? []) edgeIds.add(id);
-    setHighlight({ nodeIds: new Set(ids), edgeIds, headId });
+    setHighlight({ nodeIds: new Set(ids), edgeIds, ...about });
   }
+
+  const allPairs = (ids: string[]) => ids.flatMap((a, i) => ids.slice(i + 1).map((b): [string, string] => [a, b]));
 
   function showPath(path: string[] | null) {
     if (!path) return setHighlight(null);
@@ -41,7 +45,15 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
     if (!isFamilyHead(index, id)) return setPanel({ kind: "person", id });
     if (highlight?.headId === id) return setHighlight(null);
     const family = familyOf(index, id);
-    highlightPeople(family, family.flatMap((a, i) => family.slice(i + 1).map((b): [string, string] => [a, b])), id);
+    highlightPeople(family, allPairs(family), { headId: id });
+  }
+
+  // Search: show everyone related to this person, and light up their close family.
+  function focus(id: string | undefined) {
+    setPanel({ kind: "family", id });
+    if (!id) return setHighlight(null);
+    const family = closeFamilyOf(index, id);
+    highlightPeople(family, allPairs(family), { focusId: id });
   }
 
   function saved(next: Person[]) {
@@ -55,16 +67,24 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
     window.location.href = "/login";
   }
 
-  const panelTitle = panel?.kind === "find" ? "Find relationship" : panel?.id ? "Edit person" : "Add person";
+  const panelTitle =
+    panel?.kind === "find" ? "Find relationship" : panel?.kind === "family" ? "Search family" : panel?.id ? "Edit person" : "Add person";
 
   return (
     <div className="flex h-dvh flex-col">
-      <header className="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
+      <header className="flex items-center gap-1.5 border-b border-slate-200 bg-white px-3 py-2 sm:gap-2">
         <h1 className="mr-auto leading-tight">
           <span className="block text-lg font-semibold">Vansh</span>
           <span className="sr-only"> - </span>
           <span className="block text-xs text-slate-500">The family tree</span>
         </h1>
+        <button type="button" className={`${buttonClass} flex items-center gap-1.5`} aria-label="Search family" onClick={() => setPanel({ kind: "family" })}>
+          <svg viewBox="0 0 20 20" aria-hidden className="h-4 w-4">
+            <circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path d="M13 13l4.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <span className="hidden sm:inline">Search</span>
+        </button>
         <button type="button" className={buttonClass} onClick={() => setPanel({ kind: "person" })}>
           Add<span className="hidden sm:inline"> person</span>
         </button>
@@ -115,8 +135,9 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
                   </button>
                 </>
               )}
+              {focused && <span className="truncate px-2">{focused.name}&apos;s close family</span>}
               <button type="button" className={pillClass} onClick={() => setHighlight(null)}>
-                {head ? "Clear" : "Clear highlight"}
+                {head || focused ? "Clear" : "Clear highlight"}
               </button>
             </div>
           )}
@@ -132,6 +153,8 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
             </div>
             {panel.kind === "find" ? (
               <FinderPanel people={people} onPath={showPath} />
+            ) : panel.kind === "family" ? (
+              <FamilyPanel key={panel.id ?? "none"} people={people} personId={panel.id} onSelect={focus} onEdit={(id) => setPanel({ kind: "person", id })} />
             ) : (
               <PersonPanel key={panel.id ?? "new"} people={people} personId={panel.id} onSaved={saved} />
             )}
