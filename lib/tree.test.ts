@@ -1,0 +1,41 @@
+import { describe, expect, it } from "vitest";
+import { samplePeople } from "./sample-family";
+import { deletePerson, upsertPerson, type PersonInput } from "./tree";
+
+const inputFor = (id: string): PersonInput => {
+  const { id: _id, ...rest } = samplePeople.find((p) => p.id === id)!;
+  return rest;
+};
+
+describe("upsertPerson", () => {
+  it("rejects making a person their own ancestor", () => {
+    expect(() => upsertPerson(samplePeople, "hari", { ...inputFor("hari"), fatherId: "ravi" }, false)).toThrow(/own ancestor/);
+    expect(() => upsertPerson(samplePeople, "ravi", { ...inputFor("ravi"), fatherId: "ravi" }, false)).toThrow(/own father/);
+  });
+
+  it("rejects a parent of the wrong gender", () => {
+    expect(() => upsertPerson(samplePeople, "ravi", { ...inputFor("ravi"), motherId: "suresh" }, false)).toThrow(/cannot be set as mother/);
+  });
+
+  it("rejects a gender change that would break a parent link", () => {
+    expect(() => upsertPerson(samplePeople, "suresh", { ...inputFor("suresh"), gender: "female" }, false)).toThrow(/father of/);
+  });
+
+  it("keeps spouse links two-way", () => {
+    const added = upsertPerson(samplePeople, "vikram", { ...inputFor("vikram"), spouseIds: ["asha"] }, false);
+    expect(added.find((p) => p.id === "asha")!.spouseIds).toEqual(["vikram"]);
+    const removed = upsertPerson(added, "asha", { ...inputFor("asha"), spouseIds: [] }, false);
+    expect(removed.find((p) => p.id === "vikram")!.spouseIds).toEqual([]);
+  });
+});
+
+describe("deletePerson", () => {
+  it("removes every link pointing to the deleted person", () => {
+    const people = deletePerson(samplePeople, "suresh");
+    expect(people.find((p) => p.id === "suresh")).toBeUndefined();
+    expect(people.find((p) => p.id === "ravi")!.fatherId).toBeUndefined();
+    expect(people.find((p) => p.id === "ravi")!.motherId).toBe("anita");
+    expect(people.find((p) => p.id === "anita")!.spouseIds).toEqual([]);
+    expect(people.find((p) => p.id === "usha")!.spouseIds).toEqual([]);
+  });
+});
