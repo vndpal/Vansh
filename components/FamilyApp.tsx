@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { inLawFamilies, openFor, shownPeople } from "@/lib/inlaws";
 import { layoutTree, pairKey } from "@/lib/layout";
 import { buildIndex, closeFamilyOf, familyOf, isFamilyHead } from "@/lib/tree";
 import type { Person } from "@/lib/types";
@@ -12,6 +13,8 @@ import TreeView, { type Highlight } from "./TreeView";
 
 type Panel = { kind: "person"; id?: string } | { kind: "find" } | { kind: "family"; id?: string } | null;
 type View = "tree" | "stack";
+/** Who is highlighted, and which pairs of them to draw the lines between. */
+type Selection = { ids: string[]; pairs: Array<[string, string]> } & Pick<Highlight, "headId" | "focusId">;
 
 const buttonClass = "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-100";
 const pillClass = "shrink-0 rounded-full bg-white/20 px-3 py-0.5 hover:bg-white/30";
@@ -20,30 +23,56 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
   const [people, setPeople] = useState(initialPeople);
   const [view, setView] = useState<View>("tree");
   const [panel, setPanel] = useState<Panel>(null);
-  const [highlight, setHighlight] = useState<Highlight | null>(null);
-  const layout = useMemo(() => layoutTree(people), [people]);
+  const [selection, setSelection] = useState<Selection | null>(null);
   const index = useMemo(() => buildIndex(people), [people]);
-  const head = highlight?.headId ? index.byId.get(highlight.headId) : undefined;
-  const focused = highlight?.focusId ? index.byId.get(highlight.focusId) : undefined;
 
-  // Lights up the given people and the lines drawn between any of the given pairs.
-  function highlightPeople(ids: string[], pairs: Array<[string, string]>, about: Pick<Highlight, "headId" | "focusId"> = {}) {
+  // In-law families (a son's wife's family, a daughter's husband's family) start folded away
+  // in the tree; `open` holds the people who married in whose families are shown.
+  const inLaws = useMemo(() => inLawFamilies(people), [people]);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const shown = useMemo(() => shownPeople(inLaws, open), [inLaws, open]);
+  const layout = useMemo(() => layoutTree(people.filter((p) => shown.has(p.id))), [people, shown]);
+  const toggles = useMemo(
+    () => new Map([...inLaws.families].filter(([id]) => shown.has(id)).map(([id, ids]) => [id, { count: ids.length, open: open.has(id) }])),
+    [inLaws, shown, open],
+  );
+  const allOpen = [...inLaws.families.keys()].every((id) => open.has(id));
+  const toggleInLaws = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
+  // The highlighted lines come from the current layout, which changes as families open.
+  const nodeIds = useMemo(() => new Set(selection?.ids), [selection]);
+  const highlight = useMemo<Highlight | null>(() => {
+    if (!selection) return null;
     const edgeIds = new Set<string>();
-    for (const [a, b] of pairs) for (const id of layout.linkEdges.get(pairKey(a, b)) ?? []) edgeIds.add(id);
-    setHighlight({ nodeIds: new Set(ids), edgeIds, ...about });
+    for (const [a, b] of selection.pairs) for (const id of layout.linkEdges.get(pairKey(a, b)) ?? []) edgeIds.add(id);
+    return { nodeIds, edgeIds, headId: selection.headId, focusId: selection.focusId };
+  }, [selection, nodeIds, layout]);
+  const head = selection?.headId ? index.byId.get(selection.headId) : undefined;
+  const focused = selection?.focusId ? index.byId.get(selection.focusId) : undefined;
+
+  // Lights up the given people and the lines between any of the given pairs, opening any
+  // folded family they are in.
+  function highlightPeople(ids: string[], pairs: Array<[string, string]>, about: Pick<Highlight, "headId" | "focusId"> = {}) {
+    setOpen((prev) => openFor(inLaws, prev, ids));
+    setSelection({ ids, pairs, ...about });
   }
 
   const allPairs = (ids: string[]) => ids.flatMap((a, i) => ids.slice(i + 1).map((b): [string, string] => [a, b]));
 
   function showPath(path: string[] | null) {
-    if (!path) return setHighlight(null);
+    if (!path) return setSelection(null);
     highlightPeople(path, path.slice(1).map((id, i) => [path[i], id]));
   }
 
   // A family head's card highlights his family (click again to clear); anyone else opens for editing.
   function select(id: string) {
     if (!isFamilyHead(index, id)) return setPanel({ kind: "person", id });
-    if (highlight?.headId === id) return setHighlight(null);
+    if (selection?.headId === id) return setSelection(null);
     const family = familyOf(index, id);
     highlightPeople(family, allPairs(family), { headId: id });
   }
@@ -51,14 +80,19 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
   // Search: show everyone related to this person, and light up their close family.
   function focus(id: string | undefined) {
     setPanel({ kind: "family", id });
-    if (!id) return setHighlight(null);
+    if (!id) return setSelection(null);
     const family = closeFamilyOf(index, id);
     highlightPeople(family, allPairs(family), { focusId: id });
   }
 
   function saved(next: Person[]) {
+    // Keep whoever was just added or edited in view, even inside a folded family.
+    const before = new Set(people.map((p) => p.id));
+    const touched = next.filter((p) => !before.has(p.id)).map((p) => p.id);
+    if (panel?.kind === "person" && panel.id) touched.push(panel.id);
+    setOpen((prev) => openFor(inLawFamilies(next), prev, touched));
     setPeople(next);
-    setHighlight(null);
+    setSelection(null);
     setPanel(null);
   }
 
@@ -106,23 +140,35 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
               </button>
             </div>
           ) : view === "tree" ? (
-            <TreeView layout={layout} highlight={highlight} onSelect={select} />
+            <TreeView layout={layout} highlight={highlight} onSelect={select} inLaws={toggles} onToggleInLaws={toggleInLaws} />
           ) : (
             <StackView people={people} highlight={highlight} onSelect={select} />
           )}
           {people.length > 0 && (
-            <div role="group" aria-label="View" className="absolute left-3 top-3 z-10 flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm shadow-sm">
-              {(["tree", "stack"] as const).map((v) => (
+            <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
+              <div role="group" aria-label="View" className="flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm shadow-sm">
+                {(["tree", "stack"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={view === v}
+                    onClick={() => setView(v)}
+                    className={`rounded-md px-3 py-1 capitalize ${view === v ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+              {view === "tree" && inLaws.families.size > 0 && (
                 <button
-                  key={v}
                   type="button"
-                  aria-pressed={view === v}
-                  onClick={() => setView(v)}
-                  className={`rounded-md px-3 py-1 capitalize ${view === v ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                  title={allOpen ? "Fold away every in-law family" : "Show every in-law family"}
+                  onClick={() => setOpen(allOpen ? new Set() : new Set(inLaws.families.keys()))}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm hover:bg-slate-100"
                 >
-                  {v}
+                  {allOpen ? "Collapse all" : "Expand all"}
                 </button>
-              ))}
+              )}
             </div>
           )}
           {highlight && (
@@ -136,7 +182,7 @@ export default function FamilyApp({ initialPeople }: { initialPeople: Person[] }
                 </>
               )}
               {focused && <span className="truncate px-2">{focused.name}&apos;s close family</span>}
-              <button type="button" className={pillClass} onClick={() => setHighlight(null)}>
+              <button type="button" className={pillClass} onClick={() => setSelection(null)}>
                 {head || focused ? "Clear" : "Clear highlight"}
               </button>
             </div>

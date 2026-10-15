@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { createContext, useContext, useEffect, useMemo } from "react";
 import {
   Background,
   Controls,
@@ -15,7 +15,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { NODE_HEIGHT, NODE_WIDTH, type FamilyBoxNode, type PersonNode, type TreeLayout } from "@/lib/layout";
+import { NODE_HEIGHT, NODE_WIDTH, type PersonNode, type TreeLayout } from "@/lib/layout";
 import { genderStyle, HEAD_HINT, HeadTag } from "./person-style";
 
 export interface Highlight {
@@ -27,12 +27,16 @@ export interface Highlight {
   focusId?: string;
 }
 
+/** Opens or folds away the family of someone who married in. */
+const ToggleInLaws = createContext<(id: string) => void>(() => {});
+
 // Zero-size, invisible handles so lines meet exactly at the card edge or union point.
 const hiddenHandle = { opacity: 0, pointerEvents: "none" as const, width: 0, height: 0, minWidth: 0, minHeight: 0, border: 0 };
 
 function PersonCard({ data }: NodeProps<PersonNode>) {
-  const { person, isHead, state = "normal" } = data;
+  const { person, isHead, inLaws, state = "normal" } = data;
   const { border, tint } = genderStyle[person.gender];
+  const toggleInLaws = useContext(ToggleInLaws);
   return (
     <div
       style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
@@ -47,6 +51,20 @@ function PersonCard({ data }: NodeProps<PersonNode>) {
       <Handle type="source" position={Position.Right} id="r" style={hiddenHandle} isConnectable={false} />
       <Handle type="source" position={Position.Bottom} id="b" style={hiddenHandle} isConnectable={false} />
       {isHead && <HeadTag className="absolute -top-2 left-2" />}
+      {inLaws && (
+        <button
+          type="button"
+          className="nodrag nopan absolute -top-2.5 right-2 rounded-full border border-slate-300 bg-white px-1.5 text-[10px] font-semibold leading-4 text-slate-700 shadow-sm hover:bg-slate-100"
+          title={inLaws.open ? `Fold away ${person.name}'s family` : `Show ${person.name}'s family (${inLaws.count} more)`}
+          aria-expanded={inLaws.open}
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleInLaws(person.id);
+          }}
+        >
+          {inLaws.open ? "− family" : `+${inLaws.count} family`}
+        </button>
+      )}
       <div className="truncate text-sm font-semibold text-slate-900">{person.name}</div>
       {(person.nickname || person.birthYear !== undefined) && (
         <div className="truncate text-xs text-slate-500">
@@ -69,29 +87,15 @@ function UnionPoint() {
   );
 }
 
-// Soft tints that tell family lines apart without clashing with the teal and violet cards.
-const boxTones = [
-  { box: "border-slate-300 bg-slate-200/40", label: "bg-slate-600" },
-  { box: "border-sky-300 bg-sky-100/50", label: "bg-sky-700" },
-  { box: "border-rose-300 bg-rose-100/50", label: "bg-rose-700" },
-  { box: "border-lime-400 bg-lime-100/50", label: "bg-lime-700" },
-];
-
-function FamilyBox({ data }: NodeProps<FamilyBoxNode>) {
-  const tone = boxTones[data.tone % boxTones.length];
-  return (
-    <div className={`h-full w-full rounded-2xl border-2 border-dashed ${tone.box}`}>
-      <span className={`absolute left-3 top-1.5 rounded-md px-2 py-0.5 text-xs font-semibold text-white ${tone.label}`}>{data.label}</span>
-    </div>
-  );
-}
-
-const nodeTypes: NodeTypes = { person: PersonCard, union: UnionPoint, family: FamilyBox };
+const nodeTypes: NodeTypes = { person: PersonCard, union: UnionPoint };
 
 interface Props {
   layout: TreeLayout;
   highlight: Highlight | null;
   onSelect: (id: string) => void;
+  /** People who married in and have a family to show or fold away. */
+  inLaws: Map<string, { count: number; open: boolean }>;
+  onToggleInLaws: (id: string) => void;
 }
 
 const MIN_READABLE_ZOOM = 0.6;
@@ -99,18 +103,18 @@ const MIN_READABLE_ZOOM = 0.6;
 // size and fitView would skip them. This makes it use their declared size instead.
 const FIT_ALL = { includeHiddenNodes: true };
 
-function Flow({ layout, highlight, onSelect }: Props) {
+function Flow({ layout, highlight, onSelect, inLaws }: Omit<Props, "onToggleInLaws">) {
   const { fitView, setViewport } = useReactFlow();
   const store = useStoreApi();
 
   const nodes = useMemo(
     () =>
-      layout.nodes.map((node) =>
-        node.type === "person" && highlight
-          ? { ...node, data: { ...node.data, state: highlight.nodeIds.has(node.id) ? ("highlight" as const) : ("dim" as const) } }
-          : node,
-      ),
-    [layout, highlight],
+      layout.nodes.map((node) => {
+        if (node.type !== "person") return node;
+        const state = highlight ? (highlight.nodeIds.has(node.id) ? ("highlight" as const) : ("dim" as const)) : undefined;
+        return state || inLaws.has(node.id) ? { ...node, data: { ...node.data, state, inLaws: inLaws.get(node.id) } } : node;
+      }),
+    [layout, highlight, inLaws],
   );
 
   const edges = useMemo<BuiltInEdge[]>(
@@ -118,21 +122,23 @@ function Flow({ layout, highlight, onSelect }: Props) {
       highlight
         ? layout.edges.map((edge) =>
             highlight.edgeIds.has(edge.id)
-              ? { ...edge, zIndex: 1, style: { ...edge.style, stroke: "#d97706", strokeWidth: 3 } }
+              ? { ...edge, zIndex: 1, style: { stroke: "#d97706", strokeWidth: 3 } }
               : { ...edge, style: { ...edge.style, opacity: 0.15 } },
           )
         : layout.edges,
     [layout, highlight],
   );
 
-  // Bring the highlighted path into view (after the panel has resized the canvas).
+  // Bring the highlighted people into view (after the panel has resized the canvas). Only
+  // when they change, not when a family is opened or folded while they are highlighted.
+  const highlighted = highlight?.nodeIds;
   useEffect(() => {
-    if (!highlight) return;
+    if (!highlighted) return;
     const timer = setTimeout(() => {
-      fitView({ ...FIT_ALL, nodes: [...highlight.nodeIds].map((id) => ({ id })), padding: 0.2, duration: 400, maxZoom: 1.2 });
+      fitView({ ...FIT_ALL, nodes: [...highlighted].map((id) => ({ id })), padding: 0.2, duration: 400, maxZoom: 1.2 });
     }, 50);
     return () => clearTimeout(timer);
-  }, [highlight, fitView]);
+  }, [highlighted, fitView]);
 
   // Opening view: the whole tree if it fits at a readable size, otherwise the oldest
   // generation at a readable zoom (pan and pinch to explore the rest).
@@ -177,10 +183,12 @@ function Flow({ layout, highlight, onSelect }: Props) {
   );
 }
 
-export default function TreeView(props: Props) {
+export default function TreeView({ onToggleInLaws, ...props }: Props) {
   return (
     <ReactFlowProvider>
-      <Flow {...props} />
+      <ToggleInLaws.Provider value={onToggleInLaws}>
+        <Flow {...props} />
+      </ToggleInLaws.Provider>
     </ReactFlowProvider>
   );
 }

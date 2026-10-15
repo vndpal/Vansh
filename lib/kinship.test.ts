@@ -169,6 +169,9 @@ describe("Hindi words", () => {
     expect(hindi("arjun", "meera")).toBe("Saali");
     expect(hindi("meera", "arjun")).toBe("Jija");
     expect(hindi("suresh", "priya")).toBe("Bahu");
+    // Elder brother's wife is Bhabhi, younger brother's wife is Bahu.
+    expect(hindi("mahesh", "anita")).toBe("Bhabhi");
+    expect(hindi("suresh", "geeta")).toBe("Bahu");
     expect(hindi("dinesh", "arjun")).toBe("Damaad");
     expect(hindi("ravi", "usha")).toBe("Sauteli Maa");
     expect(hindi("usha", "ravi")).toBe("Sautela Beta");
@@ -214,8 +217,9 @@ describe("Hindi words", () => {
   });
 
   it("builds a phrase when no single word fits", () => {
-    expect(hindi("ravi", "meera")).toBe("Bhabhi ki Behen");
-    expect(hindi("ravi", "sanjay")).toBe("Bhabhi ka Jija");
+    // Arjun is Ravi's younger cousin, so Arjun's wife Neha is Ravi's Bahu.
+    expect(hindi("ravi", "meera")).toBe("Bahu ki Behen");
+    expect(hindi("ravi", "sanjay")).toBe("Bahu ka Jija");
     expect(hindi("ravi", "gopal")).toBe("Dada ka Bhai");
     expect(hindi("priya", "geeta")).toBe("Pati ki Chachi");
     expect(hindi("rohan", "hari")).toBe("Pardada ke Pita");

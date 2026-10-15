@@ -328,7 +328,8 @@ function hindiWord(index: FamilyIndex, ids: string[], moves: Move[]): string | n
       // B is the spouse of A's blood relative (at -2).
       if (r.up === 1 && r.down === 0) return byGender(g, "Sautela Pita", "Sauteli Maa");
       const generation = r.down - r.up;
-      if (generation === 0) return byGender(g, "Jija", "Bhabhi");
+      // A brother's (or cousin's) wife is Bhabhi when he is older than A, Bahu when younger.
+      if (generation === 0) return g === "male" ? "Jija" : byAge(at(-2), a, "Bhabhi", "Bahu");
       if (generation === 1) return byGender(g, "Damaad", "Bahu");
       if (generation === -1) return uncleWord(at(1), at(-2), true);
       return null;

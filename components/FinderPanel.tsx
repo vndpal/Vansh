@@ -102,7 +102,7 @@ export default function FinderPanel({ people, onPath }: Props) {
           <p className="font-medium">{r.sentence}.</p>
           <p className="break-words text-sm text-slate-700">{r.chain}</p>
           {r.hindi?.includes(" or ") && (
-            <p className="text-xs text-slate-500">Add birth years to tell elder from younger (Tau or Chacha, Jeth or Devar).</p>
+            <p className="text-xs text-slate-500">Add birth years to tell elder from younger (Tau or Chacha, Jeth or Devar, Bhabhi or Bahu).</p>
           )}
         </div>
       )}
