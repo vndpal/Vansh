@@ -16,9 +16,9 @@ export default function FinderPanel({ people, onPath }: Props) {
   const [result, setResult] = useState<{ relationship: Relationship; a: Person; b: Person } | null>(null);
   const [error, setError] = useState("");
 
-  function find() {
-    const a = people.find((p) => p.id === aId);
-    const b = people.find((p) => p.id === bId);
+  function find(fromId = aId, toId = bId) {
+    const a = people.find((p) => p.id === fromId);
+    const b = people.find((p) => p.id === toId);
     if (!a || !b) return;
     if (a.id === b.id) {
       setError("Pick two different people.");
@@ -32,6 +32,13 @@ export default function FinderPanel({ people, onPath }: Props) {
     onPath(relationship.connected ? relationship.path : null);
   }
 
+  // Swaps the two people, and shows the relationship the other way round if one is showing.
+  function reverse() {
+    setAId(bId);
+    setBId(aId);
+    if (result || error) find(bId, aId);
+  }
+
   function clear() {
     setResult(null);
     setError("");
@@ -42,13 +49,29 @@ export default function FinderPanel({ people, onPath }: Props) {
 
   return (
     <div className="space-y-4">
-      <PersonPicker label="Person A" options={people} value={aId} onChange={setAId} />
-      <PersonPicker label="Person B" options={people} value={bId} onChange={setBId} />
+      <div className="space-y-2">
+        <PersonPicker label="Person A" options={people} value={aId} onChange={setAId} />
+        <div className="flex justify-center">
+          <button
+            type="button"
+            disabled={!aId && !bId}
+            onClick={reverse}
+            aria-label="Reverse: swap Person A and Person B"
+            className="flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+          >
+            <svg viewBox="0 0 20 20" aria-hidden className="h-4 w-4">
+              <path d="M6 3v13m0 0l-3-3m3 3l3-3M14 17V4m0 0l-3 3m3-3l3 3" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Reverse
+          </button>
+        </div>
+        <PersonPicker label="Person B" options={people} value={bId} onChange={setBId} />
+      </div>
       <div className="flex gap-2">
         <button
           type="button"
           disabled={!aId || !bId}
-          onClick={find}
+          onClick={() => find()}
           className="rounded-md bg-slate-900 px-4 py-2 text-white disabled:opacity-50"
         >
           Find

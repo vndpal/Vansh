@@ -310,13 +310,20 @@ function hindiWord(index: FamilyIndex, ids: string[], moves: Move[]): string | n
       return byGender(g, "Pati", "Patni");
     case "B":
       return hindiBlood(index, r);
-    case "SB":
+    case "SB": {
       // B is a blood relative of A's spouse (at 1).
       if (r.up === 1 && r.down === 0) return byGender(g, "Sasur", "Saas");
       if (r.up === 0 && r.down === 1) return byGender(g, "Sautela Beta", "Sauteli Beti");
-      if (r.up !== 1 || r.down !== 1) return null;
-      if (a.gender === "male") return byGender(g, "Saala", "Saali");
-      return g === "female" ? "Nanad" : byAge(b, at(1), "Jeth", "Devar");
+      const generation = r.down - r.up;
+      // The spouse's brothers and sisters, cousins included, as with Bhabhi and Jija below.
+      if (generation === 0) {
+        if (a.gender === "male") return byGender(g, "Saala", "Saali");
+        return g === "female" ? "Nanad" : byAge(b, at(1), "Jeth", "Devar");
+      }
+      // Their children, named after B's parent as with A's own Bhatija and Bhanja.
+      if (generation === 1) return at(-2).gender === "male" ? byGender(g, "Bhatija", "Bhatiji") : byGender(g, "Bhanja", "Bhanji");
+      return null;
+    }
     case "BS": {
       // B is the spouse of A's blood relative (at -2).
       if (r.up === 1 && r.down === 0) return byGender(g, "Sautela Pita", "Sauteli Maa");
@@ -327,8 +334,8 @@ function hindiWord(index: FamilyIndex, ids: string[], moves: Move[]): string | n
       return null;
     }
     case "SBS": {
-      // Spouse's sibling's spouse.
-      if (r.up !== 1 || r.down !== 1) return null;
+      // Spouse's sibling's (or cousin's) spouse.
+      if (r.up === 0 || r.down !== r.up) return null;
       const sibling = at(-2);
       if (a.gender === "male") return sibling.gender === "female" ? "Saadhu" : "Salhaj";
       return sibling.gender === "female" ? "Nandoi" : byAge(sibling, at(1), "Jethani", "Devrani");

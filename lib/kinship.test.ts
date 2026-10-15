@@ -183,11 +183,40 @@ describe("Hindi words", () => {
     expect(hindi("dinesh", "geeta")).toBe("Samdhan");
   });
 
+  it("names a spouse's cousins like their brothers and sisters, both ways", () => {
+    // Arjun (1980) is the younger cousin of Ravi (1975), Priya's husband.
+    expect(hindi("priya", "arjun")).toBe("Devar");
+    expect(hindi("arjun", "priya")).toBe("Bhabhi");
+    expect(hindi("neha", "ravi")).toBe("Jeth");
+    expect(hindi("priya", "neha")).toBe("Devrani");
+    expect(hindi("neha", "priya")).toBe("Jethani");
+    expect(hindi("priya", "tara")).toBe("Bhatiji");
+
+    const person = (id: string, gender: "male" | "female", extra: Partial<Person> = {}): Person => ({ id, name: id, gender, spouseIds: [], ...extra });
+    const family = [
+      person("dada", "male"),
+      person("x", "male", { fatherId: "dada" }),
+      person("y", "male", { fatherId: "dada" }),
+      person("bride", "female", { fatherId: "x", spouseIds: ["groom"] }),
+      person("groom", "male", { spouseIds: ["bride"] }),
+      person("cousinBro", "male", { fatherId: "y", spouseIds: ["cousinBroWife"] }),
+      person("cousinBroWife", "female", { spouseIds: ["cousinBro"] }),
+      person("cousinSis", "female", { fatherId: "y", spouseIds: ["cousinSisHusband"] }),
+      person("cousinSisHusband", "male", { spouseIds: ["cousinSis"] }),
+      person("cousinSisSon", "male", { fatherId: "cousinSisHusband", motherId: "cousinSis" }),
+    ];
+    expect(hindi("groom", "cousinBro", family)).toBe("Saala");
+    expect(hindi("groom", "cousinSis", family)).toBe("Saali");
+    expect(hindi("cousinBro", "groom", family)).toBe("Jija");
+    expect(hindi("groom", "cousinBroWife", family)).toBe("Salhaj");
+    expect(hindi("groom", "cousinSisHusband", family)).toBe("Saadhu");
+    expect(hindi("groom", "cousinSisSon", family)).toBe("Bhanja");
+  });
+
   it("builds a phrase when no single word fits", () => {
     expect(hindi("ravi", "meera")).toBe("Bhabhi ki Behen");
     expect(hindi("ravi", "sanjay")).toBe("Bhabhi ka Jija");
     expect(hindi("ravi", "gopal")).toBe("Dada ka Bhai");
-    expect(hindi("priya", "arjun")).toBe("Pati ka Chachera Bhai");
     expect(hindi("priya", "geeta")).toBe("Pati ki Chachi");
     expect(hindi("rohan", "hari")).toBe("Pardada ke Pita");
     expect(hindi("hari", "rohan")).toBe("Parpote ka Beta");

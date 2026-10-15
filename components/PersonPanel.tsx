@@ -21,6 +21,8 @@ export default function PersonPanel({ people, personId, onSaved }: Props) {
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [fatherId, setFatherId] = useState(existing?.fatherId);
   const [motherId, setMotherId] = useState(existing?.motherId);
+  // The parent that was filled in from the other parent's spouse, if any.
+  const [autoFilled, setAutoFilled] = useState<"father" | "mother">();
   const [spouseIds, setSpouseIds] = useState(existing?.spouseIds ?? []);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,6 +36,31 @@ export default function PersonPanel({ people, personId, onSaved }: Props) {
     return { male: allowed.filter((p) => p.gender === "male"), female: allowed.filter((p) => p.gender === "female") };
   }, [people, personId]);
   const spouseOptions = people.filter((p) => p.id !== personId && !spouseIds.includes(p.id));
+
+  // Choosing one parent fills in the other with that parent's spouse, when there is exactly
+  // one. It never replaces a parent the user chose, and the filled-in one can be changed.
+  function chooseParent(role: "father" | "mother", id: string | undefined) {
+    const other = role === "father" ? "mother" : "father";
+    const set = { father: setFatherId, mother: setMotherId };
+    set[role](id);
+    if (autoFilled === role) setAutoFilled(undefined);
+    const otherId = role === "father" ? motherId : fatherId;
+    if (!id || (otherId && autoFilled !== other)) return;
+    const spouses = parentOptions[other === "father" ? "male" : "female"].filter((p) => p.spouseIds.includes(id));
+    const spouse = spouses.length === 1 ? spouses[0].id : undefined;
+    set[other](spouse);
+    setAutoFilled(spouse ? other : undefined);
+  }
+
+  const autoFilledNote = (role: "father" | "mother") => {
+    const from = people.find((p) => p.id === (role === "father" ? motherId : fatherId));
+    if (autoFilled !== role || !from) return null;
+    return (
+      <p className="mt-1 text-xs text-slate-500">
+        Filled in as {from.name}&apos;s {role === "father" ? "husband" : "wife"}. Change it if that&apos;s wrong.
+      </p>
+    );
+  };
 
   async function run(request: () => Promise<Person[]>) {
     setBusy(true);
@@ -111,8 +138,14 @@ export default function PersonPanel({ people, personId, onSaved }: Props) {
         />
       </div>
 
-      <PersonPicker label="Father" options={parentOptions.male} value={fatherId} onChange={setFatherId} />
-      <PersonPicker label="Mother" options={parentOptions.female} value={motherId} onChange={setMotherId} />
+      <div>
+        <PersonPicker label="Father" options={parentOptions.male} value={fatherId} onChange={(id) => chooseParent("father", id)} />
+        {autoFilledNote("father")}
+      </div>
+      <div>
+        <PersonPicker label="Mother" options={parentOptions.female} value={motherId} onChange={(id) => chooseParent("mother", id)} />
+        {autoFilledNote("mother")}
+      </div>
 
       <div>
         <p className="mb-1 text-sm font-medium text-slate-700">Spouses</p>
