@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Family Tree",
-  description: "Our family tree",
+  title: "Vansh - The family tree",
+  description: "Vansh - The family tree",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

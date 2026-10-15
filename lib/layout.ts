@@ -1,7 +1,9 @@
 // Turns the people list into React Flow nodes and edges laid out top-down with dagre.
-// Spouses are grouped into one dagre node so they always sit side by side.
+// Spouses are grouped into one dagre node so they always sit side by side, and
+// brothers and sisters are kept in birth order, eldest on the left.
 import dagre from "@dagrejs/dagre";
 import type { BuiltInEdge, Node } from "@xyflow/react";
+import { buildIndex, byBirthYear, isFamilyHead } from "./tree";
 import type { Person } from "./types";
 
 export const NODE_WIDTH = 168;
@@ -10,7 +12,7 @@ const SPOUSE_GAP = 32;
 const EDGE_STYLE = { stroke: "#94a3b8", strokeWidth: 1.5 };
 
 export type NodeState = "normal" | "highlight" | "dim";
-export type PersonNode = Node<{ person: Person; state?: NodeState }, "person">;
+export type PersonNode = Node<{ person: Person; isHead: boolean; state?: NodeState }, "person">;
 export type UnionNode = Node<Record<string, never>, "union">;
 
 export interface TreeLayout {
@@ -45,13 +47,16 @@ function spouseGroups(people: Person[], byId: Map<string, Person>, spouses: Map<
       if (byId.get(group[0])!.gender === "female") group.reverse();
       groups.push(group);
     } else if (group.length > 2) {
-      // Walk from someone with the fewest spouses so remarriage chains stay in order.
+      // Walk from the eldest of those with the fewest spouses, visiting spouses oldest
+      // first, so remarriage chains stay in order.
       const order: string[] = [];
+      const oldestFirst = (ids: Iterable<string>) => [...ids].map((id) => byId.get(id)!).sort(byBirthYear);
       const visit = (id: string) => {
         order.push(id);
-        for (const s of spouses.get(id) ?? []) if (!order.includes(s)) visit(s);
+        for (const s of oldestFirst(spouses.get(id)!)) if (!order.includes(s.id)) visit(s.id);
       };
-      visit(group.reduce((a, b) => ((spouses.get(b)?.size ?? 0) < (spouses.get(a)?.size ?? 0) ? b : a)));
+      const fewest = Math.min(...group.map((id) => spouses.get(id)!.size));
+      visit(oldestFirst(group.filter((id) => spouses.get(id)!.size === fewest))[0].id);
       groups.push(order);
     } else {
       groups.push(group);
@@ -60,8 +65,68 @@ function spouseGroups(people: Person[], byId: Map<string, Person>, spouses: Map<
   return groups;
 }
 
+/**
+ * Dagre order constraints that keep each couple's children eldest-on-the-left. With
+ * several wives, each wife's children stay together under her. A constraint that
+ * would contradict an earlier one (possible when two families intermarry) is skipped.
+ */
+function siblingConstraints(
+  people: Person[],
+  groups: string[][],
+  groupOf: Map<string, number>,
+  parentsOf: (p: Person) => string[],
+): Array<{ left: string; right: string }> {
+  // Parent group -> its children, with where they hang from (average parent position).
+  const families = new Map<number, Array<{ group: number; slot: number; person: Person }>>();
+  for (const child of people) {
+    const positions = new Map<number, number[]>();
+    for (const parentId of parentsOf(child)) {
+      const g = groupOf.get(parentId)!;
+      if (g === groupOf.get(child.id)) continue;
+      positions.set(g, [...(positions.get(g) ?? []), groups[g].indexOf(parentId)]);
+    }
+    for (const [g, at] of positions) {
+      const kids = families.get(g) ?? [];
+      kids.push({ group: groupOf.get(child.id)!, slot: at.reduce((a, b) => a + b) / at.length, person: child });
+      families.set(g, kids);
+    }
+  }
+
+  // Group -> groups it must sit left of. `reaches` follows those links transitively.
+  const after = new Map<string, Set<string>>();
+  const reaches = (from: string, to: string) => {
+    const stack = [from];
+    const seen = new Set(stack);
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (id === to) return true;
+      for (const next of after.get(id) ?? []) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          stack.push(next);
+        }
+      }
+    }
+    return false;
+  };
+
+  const constraints: Array<{ left: string; right: string }> = [];
+  for (const kids of families.values()) {
+    kids.sort((a, b) => a.slot - b.slot || byBirthYear(a.person, b.person));
+    for (let i = 1; i < kids.length; i++) {
+      const left = `g${kids[i - 1].group}`;
+      const right = `g${kids[i].group}`;
+      if (reaches(right, left)) continue;
+      after.set(left, (after.get(left) ?? new Set()).add(right));
+      constraints.push({ left, right });
+    }
+  }
+  return constraints;
+}
+
 export function layoutTree(people: Person[]): TreeLayout {
-  const byId = new Map(people.map((p) => [p.id, p]));
+  const index = buildIndex(people);
+  const { byId } = index;
   const spouses = new Map<string, Set<string>>();
   for (const p of people) {
     for (const s of p.spouseIds) {
@@ -91,7 +156,7 @@ export function layoutTree(people: Person[]): TreeLayout {
       if (from !== to) graph.setEdge(`g${from}`, `g${to}`);
     }
   }
-  dagre.layout(graph);
+  dagre.layout(graph, { constraints: siblingConstraints(people, groups, groupOf, parentsOf) });
 
   const nodes: TreeLayout["nodes"] = [];
   const position = new Map<string, { x: number; y: number }>();
@@ -100,7 +165,14 @@ export function layoutTree(people: Person[]): TreeLayout {
     ids.forEach((id, j) => {
       const pos = { x: x - width / 2 + j * (NODE_WIDTH + SPOUSE_GAP), y: y - NODE_HEIGHT / 2 };
       position.set(id, pos);
-      nodes.push({ id, type: "person", position: pos, data: { person: byId.get(id)! }, width: NODE_WIDTH, height: NODE_HEIGHT });
+      nodes.push({
+        id,
+        type: "person",
+        position: pos,
+        data: { person: byId.get(id)!, isHead: isFamilyHead(index, id) },
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+      });
     });
   });
 

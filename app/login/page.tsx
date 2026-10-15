@@ -33,7 +33,11 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-dvh items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-xs space-y-4 rounded-xl bg-white p-6 shadow">
-        <h1 className="text-center text-xl font-semibold">Family Tree</h1>
+        <h1 className="text-center">
+          <span className="block text-2xl font-semibold">Vansh</span>
+          <span className="sr-only"> - </span>
+          <span className="block text-sm text-slate-500">The family tree</span>
+        </h1>
         <label htmlFor="pin" className="block text-center text-sm text-slate-600">
           Enter the 6-digit PIN
         </label>

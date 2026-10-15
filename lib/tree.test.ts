@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { samplePeople } from "./sample-family";
-import { deletePerson, upsertPerson, type PersonInput } from "./tree";
+import { buildIndex, deletePerson, familyOf, isFamilyHead, upsertPerson, type PersonInput } from "./tree";
 
 const inputFor = (id: string): PersonInput => {
   const { id: _id, ...rest } = samplePeople.find((p) => p.id === id)!;
@@ -37,5 +37,20 @@ describe("deletePerson", () => {
     expect(people.find((p) => p.id === "ravi")!.motherId).toBe("anita");
     expect(people.find((p) => p.id === "anita")!.spouseIds).toEqual([]);
     expect(people.find((p) => p.id === "usha")!.spouseIds).toEqual([]);
+  });
+});
+
+describe("family heads", () => {
+  const index = buildIndex(samplePeople);
+
+  it("are men with children", () => {
+    expect(isFamilyHead(index, "suresh")).toBe(true);
+    expect(isFamilyHead(index, "anita")).toBe(false);
+    expect(isFamilyHead(index, "deepak")).toBe(false);
+  });
+
+  it("have a family of wives and children, each oldest first", () => {
+    expect(familyOf(index, "suresh")).toEqual(["suresh", "anita", "usha", "ravi", "deepak", "asha"]);
+    expect(familyOf(index, "dinesh")).toEqual(["dinesh", "neha", "meera"]);
   });
 });

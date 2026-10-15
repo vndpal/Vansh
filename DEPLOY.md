@@ -1,6 +1,6 @@
-# Deploying Family Tree
+# Deploying Vansh - The family tree
 
-Family Tree is a Next.js app that stores the whole tree as one JSON document in
+Vansh is a Next.js app that stores the whole tree as one JSON document in
 Upstash Redis (key `family-tree`) and protects everything behind a shared 6-digit PIN.
 
 You need: a GitHub account, a Vercel account, Node.js 20.9 or newer, and git.

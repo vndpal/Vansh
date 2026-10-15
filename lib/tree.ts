@@ -36,6 +36,30 @@ export function descendantIds(index: FamilyIndex, id: string): Set<string> {
   return found;
 }
 
+/** Sort comparator: oldest first, people without a birth year last, ties keep their order. */
+export function byBirthYear(a: Person, b: Person): number {
+  // Infinity - Infinity is NaN, which `|| 0` turns into a tie.
+  return (a.birthYear ?? Infinity) - (b.birthYear ?? Infinity) || 0;
+}
+
+/** A family head is a man with at least one child in the tree. */
+export function isFamilyHead(index: FamilyIndex, id: string): boolean {
+  return index.byId.get(id)?.gender === "male" && (index.childrenOf.get(id)?.length ?? 0) > 0;
+}
+
+/** Ids of a head's family: him, then his wives, then his children, each group oldest first. */
+export function familyOf(index: FamilyIndex, headId: string): string[] {
+  const sorted = (ids: string[]) =>
+    ids
+      .map((id) => index.byId.get(id))
+      .filter((p): p is Person => !!p && p.id !== headId)
+      .sort(byBirthYear)
+      .map((p) => p.id);
+  const head = index.byId.get(headId);
+  if (!head) return [];
+  return [headId, ...sorted(head.spouseIds), ...sorted(index.childrenOf.get(headId) ?? [])];
+}
+
 export type PersonInput = Omit<Person, "id">;
 
 function optionalString(value: unknown): string | undefined {
